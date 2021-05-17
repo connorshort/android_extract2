@@ -38,8 +38,8 @@ VENDORMODE = 0 # should be provided as 0 unless alternate mode
 
 HOME = str(expanduser('~'))
 
-EXTUSER = 'connor' # TODO: replace with valid user to use keepstuff functionality
-EXTGROUP = 'connor' # TODO: replace with valid group to use keepstuff functionality
+EXTUSER = 'extuser' # TODO: replace with valid user to use keepstuff functionality
+EXTGROUP = 'extuser' # TODO: replace with valid group to use keepstuff functionality
 MY_TMP = 'extract.sum'
 MY_OUT = 'extract.db'
 MY_USB = 'extract.usb'
@@ -68,7 +68,7 @@ MSC_TMP = ''
 
 JAR_TMP = 'dex.jar'
 
-DEPPATH='/home/connor/BigMAC/ExtractDep/atsh_setup'
+DEPPATH=''#SET YOUR DEPENDENCY PATH
 USINGDEPPATH=1 # 1 = true, 0 = false
 
 #SOME REQUIRE CHANGE MODE
