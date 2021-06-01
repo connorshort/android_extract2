@@ -39,7 +39,7 @@ VENDORMODE = 0 # should be provided as 0 unless alternate mode
 HOME = str(expanduser('~'))
 
 EXTUSER = 'extuser' # TODO: replace with valid user to use keepstuff functionality
-EXTGROUP = 'extuser' # TODO: replace with valid group to use keepstuff functionality
+EXTGROUP = 'extgroup' # TODO: replace with valid group to use keepstuff functionality
 MY_TMP = 'extract.sum'
 MY_OUT = 'extract.db'
 MY_USB = 'extract.usb'
@@ -52,7 +52,7 @@ MZF_LOG = 'mzf.log' # moto
 RAW_LOG = 'raw.log' # asus
 KDZ_LOG = 'kdz.log' # lg
 MY_DIR = 'extract3/' + VENDOR
-MY_FULL_DIR = '/home/connor/BigMAC/extract3' + VENDOR
+MY_FULL_DIR = '/home/user/BigMAC/extract' + VENDOR #FILL THIS OUT
 TOP_DIR = 'extract3'
 AT_CMD = 'AT\+|AT\*'
 AT_CMD = 'AT\+|AT\*|AT!|AT@|AT#|AT\$|AT%|AT\^|AT&' # expanding target AT Command symbols
@@ -68,7 +68,7 @@ MSC_TMP = ''
 
 JAR_TMP = 'dex.jar'
 
-DEPPATH=''#SET YOUR DEPENDENCY PATH
+DEPPATH='/home/connor/BigMAC/ExtractDep/atsh_setup'
 USINGDEPPATH=1 # 1 = true, 0 = false
 
 #SOME REQUIRE CHANGE MODE
@@ -94,7 +94,6 @@ UNYAFFS=str(DEPPATH)+'/unyaffs/unyaffs' # yaffs2 format1 for sony
 
 BOOT_OAT = ''
 BOOT_OAT_64 = ''
-AT_RES = ''
 SUB_SUB_TMP = 'extract_sub'
 SUB_DIR = ''
 CHUNKED = 0 # system.img
@@ -199,7 +198,7 @@ def getFormat2(filename):
     return None
 
 def getBasename(filename):
-  return str(os.popen("basename \""+str(filename)+"\"").read().rstrip("\n"))
+  return basename(filename).stdout.decode('utf-8').rstrip("\n")
 
 def getFiles():
   return subprocess.run(['ls'],stdout=subprocess.PIPE).stdout.decode('utf-8').splitlines()
@@ -210,15 +209,14 @@ def check_for_suffix(filename):
   
   if (suffix == '.apk' or suffix == '.APK' or suffix == '.Apk'
         or suffix == '.jar' or suffix == '.Jar' or suffix == '.JAR'):
-    AT_RES = 'java'
+    return 'java'
   elif (suffix2 == '.odex' or suffix2 == '.ODEX' or suffix2 == '.Odex'):
-    AT_RES == 'odex'
+    return 'odex'
   else:
-    AT_RES = 'TBD'
+    return 'TBD'
 
 #decompress the zip-like file
 def at_unzip(filename, directory):
-  global AT_RES
   format_=getFormat(filename)
   format2=getFormat2(filename)
   if (format_ in ['zip','Zip','ZIP']):
@@ -226,16 +224,13 @@ def at_unzip(filename, directory):
       z = ZipFile(filename, 'r')
       z.extractall()
       z.close()
-      AT_RES='good'
       return True
     else:
       z = ZipFile(filename, 'r')
       z.extractall(directory)
       z.close()
-      AT_RES = 'good'
       return True
   else:
-    AT_RES = 'bad'
     return False
 
 
@@ -272,7 +267,7 @@ def handle_x86(filename):
 
 def handle_bootimg(filename):
   global KEEPSTUFF
-  name=basename(filename).stdout.decode('utf-8')
+  name=getBasename(filename)
   if (name[:4] in ['boot','hosd','BOOT'] or
       name[:8] in ['recovery','fastboot','RECOVERY'] or
       name[:9] == 'droidboot' or
@@ -334,7 +329,7 @@ def handle_zip(filename, filetype):
     os.rmdir(ZIP_TMP+'/'+filename)
 
 def handle_vfat(img):
-  ext = str(os.popen('basename \''+str(img)+'\'').read().rstrip('\n'))
+  ext = getBasename(img)
   arch = ''
   os.mkdir(DIR_TMP)
   os.mkdir(MNT_TMP)
@@ -365,10 +360,10 @@ def handle_vfat(img):
     
     subprocess.run(['sudo','umount',str(MNT_TMP)],shell=True)
     os.rmdir(DIR_TMP)
-    AT_RES = 'good'
+    return true
 
 def handle_simg(img):
-  nam = str(os.popen("basename -s .img \""+str(img)+"\"").read().rstrip("\n"))
+  nam = getBasename(img)
   ext = str(nam)+".ext4"
   arch = ""
   os.mkdir(DIR_TMP)
@@ -408,7 +403,6 @@ def handle_simg(img):
 #########################
 #Get AT commands from supported filetypes
 def at_extract(filename):
-  global AT_RES
   format_= getFormat(filename)
   justname = getBasename(filename)
 
@@ -436,8 +430,7 @@ def at_extract(filename):
   elif ( VENDOR == 'samsung' ) and ( justname == 'dzImage' ):
     # Tizen OS image detected. Should abort
     # touch ../$MY_TIZ
-    AT_RES = 'tizen'
-    print(str(filename)+' processed: '+str(AT_RES))
+    print(str(filename)+' processed: '+str('tizen'))
     print(IMAGE,file=tizFile)
     # for easier ID later, needs to be existing file
     exit(55)
@@ -445,71 +438,69 @@ def at_extract(filename):
 
   if(format_ in ['data', 'apollo','FoxPro,','Mach-O','DOS/MBR','PE32','PE32+','dBase','MS','PDP-11','zlib','ISO-8859','Composite','very','Hitachi','SQLite']):
     handle_binary(filename)
-    AT_RES='good'
+    return'good'
   elif (format_ == 'ELF'):
     handle_elf(filename)
-    check_for_suffix(filename)
-    if (AT_RES == 'odex'):
+    result = check_for_suffix(filename)
+    if (result == 'odex'):
       handle_odex(filename)
-    AT_RES = 'good'
+    return 'good'
   elif (format_ == 'x86'):
     handle_x86(filename)
-    AT_RES = 'good'
+    return 'good'
   elif (format_ == 'DOS'):
     handle_text(filename)
-    AT_RES = 'good'
+    return 'good'
   elif (format_ == 'Java'):
     handle_java(filename)
-    AT_RES = 'good'
+    return 'good'
   elif (format_ in ['POSIX','Bourne-Again']):
     handle_text(filename)
-    AT_RES = 'good'
+    return 'good'
   elif (format_ in ['ASCII','XML', 'Tex','html','UTF-8','C','Pascal','python']):
     handle_text(filename)
-    AT_RES = 'good'
+    return 'good'
   elif (format_ == 'Windows'):
     handle_text(filename)
-    AT_RES = 'good'
+    return 'good'
   elif (format_ == 'Zip'):
-    check_for_suffix(filename)
-    if ('AT_RES' == 'java'):
+    if (check_for_suffix(filename) == 'java'):
       handle_java(filename)
-      AT_RES = 'good'
+      return 'good'
     else:
       handle_zip(filename, 'zip')
-      AT_RES = 'good'
+      return 'good'
   elif (format_ in ['gzip','XZ']):
     handle_zip(filename, 'gzip')
-    AT_RES = 'good'
+    return 'good'
   elif (format_ == 'Android'):
     print('Processing .img file as binary!')
     handle_bootimg(filename)
-    AT_RES = 'good'
+    return 'good'
   elif (format_ in ['broken','symbolic','SE', 'empty', 'directory','Ogg',
     'PNG', 'JPEG', 'PEM', 'TrueType', 'LLVM', 'Device']):
     # format == dBase was being skipped before; now handled as binary (jochoi)
     # format == Device Tree Blob after extracting boot/recovery img; ignoring
     # Skip broken/symbolic/sepolicy/empty/dir/...
-    AT_RES = 'skip'
+    return 'skip'
   else:
-    AT_RES = 'bad'
+    return 'bad'
 
 
 #########################
 #  OS Specific Extracts #
 #########################
 def extract_aosp():
-  global AT_RES
   print('handling AOSP images...')
   
   # Check for another zip file inside and unzip it
   print('checking for more zips inside...')
   files=getFiles()
   for f in files:
-    at_unzip(f, None)
+    unzipped = at_unzip(f, None)
     # Debug
     #print('$f at_unzip: $AT_RES'
-    if (AT_RES == 'good'):
+    if (unzipped):
       print('Unzipped sub image: ' + f)
       # Remove the zip file
       os.remove(f)
@@ -519,7 +510,8 @@ def extract_aosp():
   print('-------------------------')
   files=getFiles()
   for f in files:
-    justname = str(os.popen('basename \''+str(f)+'\'').read().rstrip('\n'))
+    file_result=''
+    justname = getBasename(f)
     # local format=`file -b $filename | cut -d' ' -f1`
     handled = False
     # echo 'Processing file: $filename' >> ../$MY_TMP # printing out the file being processed
@@ -538,9 +530,9 @@ def extract_aosp():
       print('-----------------------------')
     #---------------------------------------------------------------------------------
     if (handled == False):
-      at_extract(f)
+      file_result=at_extract(f)
     #----------------------------------------------------------------------------------
-    print(f + ' processed: ' + AT_RES)
+    print(f + ' processed: ' + file_result)
   print('-------------------------')
     
 
@@ -649,7 +641,7 @@ def main():
   else:
     print('Image: ' + IMAGE )
     #DIR_PRE= subprocess.run(["basename", IMAGE], universal_newlines=True, stdout=subprocess.PIPE, shell=True).stdout.rstrip("\n")
-    DIR_PRE= subprocess.run(["basename", IMAGE], universal_newlines=True, stdout=subprocess.PIPE).stdout.rstrip("\n")
+    DIR_PRE= getBasename(IMAGE)
     SUB_EXT = DIR_PRE[-4:]
     SUB_DIR = DIR_PRE[:-4]
 
@@ -661,9 +653,9 @@ def main():
   print('Unzipping the image file...')
   
   if (VENDOR == 'aosp'):
-    at_unzip(IMAGE, None)
+    main_unzip_result=at_unzip(IMAGE, None)
 
-  if (AT_RES == 'bad'):
+  if (main_unzip_result == False):
     print ('Sorry, there is currently no support for decompressing this image!')
     exit(0)
   
@@ -705,5 +697,3 @@ def main():
 
 if __name__ == '__main__':
   main()
-
-##############################################################################################
