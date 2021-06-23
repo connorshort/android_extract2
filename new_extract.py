@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 
+#variables must be set for EXTUSER, EXTGROUP, MY_DIR, MY_FULL_DIR, TOP_DIR, DEPPATH, and USEDEPPATH
 #in addition to usual dependencies from old versions, add rarfile, zipfile, and sh through PIP
 import os
 import os.path
@@ -19,6 +20,7 @@ from zipfile import ZipFile
 #CONNOR: sh commands to replace subprocess
 from sh import rm
 from sh import umount
+from sh import mount
 from sh import mkdir
 from sh import cp
 from sh import rmdir
@@ -30,16 +32,18 @@ from sh import cpio
 from sh import find
 from sh import chown
 from sh import cat
+from sh import simg2img
 
 IMAGE = ''
 VENDOR = ''
 KEEPSTUFF = 0 # keep all the decompiled/unpackaged stuff for later analysis
 VENDORMODE = 0 # should be provided as 0 unless alternate mode
 
-HOME = str(expanduser('~'))
+#HOME = str(expanduser('~'))
+HOME='/root'
 
-EXTUSER = 'extuser' # TODO: replace with valid user to use keepstuff functionality
-EXTGROUP = 'extgroup' # TODO: replace with valid group to use keepstuff functionality
+EXTUSER = 'connor' #replace with valid user to use keepstuff functionality
+EXTGROUP = 'connor' #replace with valid group to use keepstuff functionality
 MY_TMP = 'extract.sum'
 MY_OUT = 'extract.db'
 MY_USB = 'extract.usb'
@@ -51,9 +55,9 @@ SBF_LOG = 'sbf.log' # moto
 MZF_LOG = 'mzf.log' # moto
 RAW_LOG = 'raw.log' # asus
 KDZ_LOG = 'kdz.log' # lg
-MY_DIR = 'extract3/' + VENDOR
-MY_FULL_DIR = '/home/user/BigMAC/extract' + VENDOR #FILL THIS OUT
-TOP_DIR = 'extract3'
+MY_DIR = 'extract3/'
+MY_FULL_DIR = '/home/connor/BigMAC/extract3/' #replace with full directory for extraction ex: /home/user/BigMAC/extract
+TOP_DIR = 'extract3' #the last folder of your extract
 AT_CMD = 'AT\+|AT\*'
 AT_CMD = 'AT\+|AT\*|AT!|AT@|AT#|AT\$|AT%|AT\^|AT&' # expanding target AT Command symbols
 
@@ -172,17 +176,27 @@ def print_how_to(): #Help menu
 
 #removes files from previous run, if any
 def clean_up():
-  try:
  	  #umount(MNT_TMP, '-fl', '>', '/dev/null')
-    umount(MNT_TMP, '-fl') 
-  except:
-    print('Problem with unmounting, continuing')
-  rm('-rf', DIR_TMP)
-  rm('-rf', APK_TMP)
-  rm('-rf', ZIP_TMP)
-  rm('-rf', ODEX_TMP)
-  rm('-rf',  TAR_TMP)
-  rm('-rf',  MSC_TMP)
+  files=subprocess.run(['ls', DIR_TMP],stdout=subprocess.PIPE).stdout.decode('utf-8').splitlines()
+  for f in files:
+    if f.startswith('mnt'):
+      try:
+        umount('-fl', DIR_TMP + '/' + f)
+      except:
+        print('Failure to unmount: ' + f)
+
+  if os.path.exists(DIR_TMP):
+    shutil.rmtree(DIR_TMP)
+  if os.path.exists(APK_TMP):
+    shutil.rmtree(APK_TMP)
+  if os.path.exists(ZIP_TMP):
+    shutil.rmtree(ZIP_TMP)
+  if os.path.exists(ODEX_TMP):
+    shutil.rmtree(ODEX_TMP)
+  if os.path.exists(TAR_TMP):
+    shutil.rmtree(TAR_TMP)
+  if os.path.exists(MSC_TMP):
+    shutil.rmtree(MSC_TMP)
 
 #get the first word from the file command
 def getFormat(filename):
@@ -232,7 +246,6 @@ def at_unzip(filename, directory):
       return True
   else:
     return False
-
 
 #########################
 #    Handle Filetypes   #
@@ -291,10 +304,10 @@ def handle_bootimg(filename):
         if (format_ == 'gzip'):
           mv(line, line, '.gz')
           gunzip('-f', line, '.gz')
-          at_extract(line)
+          result = at_extract(line)
         else:
-          at_extract(line)
-        print(line + "processed: " + AT_RES)
+          result = at_extract(line)
+        print(line + "processed: " + result)
     if ( KEEPSTUFF == 1 ):
       cp('-r', 'extracted', MY_FULL_DIR + '/' + SUB_DIR + '/' + name)
       chown('-R', EXTUSER + ':' + EXTGROUP, MY_FULL_DIR + '/' + SUB_DIR + '/' + name)
@@ -319,84 +332,38 @@ def handle_zip(filename, filetype):
     else:
       print('Handling a .tar.gz file... ')
       subprocess.run(['tar','xvf',str(ZIP_TMP)+'/'+filename,'-C',str(ZIP_TMP)],shell=True)
-    os.rmdir(ZIP_TMP+'/'+filename)
-    # ------------------------------------------
-    # Need corresponding piped while loop FIXME
-    # ------------------------------------------
+    if os.path.exists(ZIP_TMP+'/'+filename):
+      shutil.rmtree(ZIP_TMP+'/'+filename)
+    #Skipping while loop because AT command extraction is not necessary
     if (KEEPSTUFF == 1):
       subprocess.run(['sudo','cp','-r',str(ZIP_TMP),str(MY_FULL_DIR)+'/'+str(SUB_DIR)+'/'+filename],shell=True)
       subprocess.run(['sudo','chown','-R',str(EXTUSER)+':'+str(EXTGROUP),str(MY_FULL_DIR)+'/'+str(SUB_DIR)+'/'+filename],shell=True)
     os.rmdir(ZIP_TMP+'/'+filename)
 
 def handle_vfat(img):
+  global BOOT_OAT, BOOT_OAT_64
   ext = getBasename(img)
-  arch = ''
-  os.mkdir(DIR_TMP)
-  os.mkdir(MNT_TMP)
-  # Make a copy
-  subprocess.run(['cp', str(img), str(DIR_TMP)+'/'+str(ext)],shell=True)
-  # NOTE: needs sudo or root permission
-  subprocess.run(['sudo', 'mount', '-t', 'vfat', str(DIR_TMP)+'/'+str(ext), str(MNT_TMP)],shell=True)
-  subprocess.run(['sudo', 'chown', '-R', str(EXTUSER) + ':' + str(EXTGROUP), str(MNT_TMP)],shell=True)
-  # Find the boot.oat for RE odex
+  mnt_name=MNT_TMP + '_' + ext
+  os.makedirs(DIR_TMP, exist_ok=True)
+  os.makedirs(mnt_name, exist_ok=True)
+  cp(img, DIR_TMP + '/' + ext)
+  try:
+    mount('-o', 'ro', '-t', 'vfat', DIR_TMP + '/' + ext, mnt_name )
+  except sh.ErrorReturnCode_32:
+    print('error mounting vfat image: ' + ext)
   BOOT_OAT=''
-  BOOT_OAT_64= ''
-
-  thisFile = open()
-
-  while open(thisFile):
-    # Debug
-    #echo 'DEBUG: boot.oat - $file'
-    arch = str(os.popen('file -b \''+str(thisFile)+'\' | cut -d\' \' -f2 | cut -d\'-\' -f1').read().rstrip('\n'))
-    if (arch == '64'):
-      BOOT_OAT_64=thisFile
-    else:
-      BOOT_OAT=thisFile
-    
-    #Need while loop for at_extract FIXME
-    if (KEEPSTUFF == 1):
-      subprocess.run(['sudo','cp','-r',str(MNT_TMP),str(MY_FULL_DIR)+'/'+str(SUB_DIR)+'/'+str(ext)],shell=True)
-      subprocess.run(['sudo','chown','-R',str(EXTUSER)+':'+str(EXTGROUP),str(MY_FULL_DIR)+'/'+str(SUB_DIR)+'/'+str(ext)],shell=True)
-    
-    subprocess.run(['sudo','umount',str(MNT_TMP)],shell=True)
-    os.rmdir(DIR_TMP)
-    return true
+  BOOT_OAT_64=''
+  return True
 
 def handle_simg(img):
-  nam = getBasename(img)
-  ext = str(nam)+".ext4"
-  arch = ""
-  os.mkdir(DIR_TMP)
-  os.mkdir(MNT_TMP)
-  subprocess.run(["simg2img",str(img),str(DIR_TMP)+"/"+str(ext)],shell=True)
-  # NOTE: needs sudo or root permission
-  subprocess.run(["sudo","mount","-t","ext4",str(DIR_TMP)+"/"+str(ext),str(MNT_TMP)],shell=True)
-  subprocess.run(["sudo","chown","-R",str(EXTUSER)+":"+str(EXTGROUP),str(MNT_TMP)],shell=True)
-  # Find the boot.oat for RE odex
-  BOOT_OAT= ""
-  BOOT_OAT_64= ""
-
-  ######################################
-  # Need corresponding while loop FIXME
-  ######################################
-  
-  # Traverse the filesystem - root permission
-  subprocess.run(["sudo","find",str(MNT_TMP),"-print0"],shell=True)
-
-  find_out = subprocess.run(["find", MNT_TMP, "-print0"],universal_newlines=True, stdout=subprocess.PIPE, shell=True).stdout.split_lines()
-  for line in find_out:
-    if (os.path.isfile(line)):
-      at_extract(line)
-      print(line + "processed: " + AT_RES)
-  
-  if (KEEPSTUFF == 1):
-    subprocess.run(["sudo","cp","-r",str(MNT_TMP),str(MY_FULL_DIR)+"/"+str(SUB_DIR)+"/"+str(ext)],shell=True)
-    subprocess.run(["sudo","chown","-R",str(EXTUSER)+":"+str(EXTGROUP),str(MY_FULL_DIR)+"/"+str(SUB_DIR)+"/"+str(ext)],shell=True)
-  
-  subprocess.run(["sudo","umount",str(MNT_TMP)],shell=True)
-  os.rmdir(DIR_TMP)
-  AT_RES = "good"
-
+  ext = getBasename(img)[:-4] + ".ext4"
+  mnt_name=MNT_TMP + '_' + ext
+  os.makedirs(DIR_TMP, exist_ok=True)
+  os.mkdir(mnt_name)
+  print('Converting to image: ' + img + ' ' + DIR_TMP +'/' + ext)
+  simg2img(img,DIR_TMP +'/' + ext)
+  mount('-o', 'ro', '-t', 'ext4', DIR_TMP + '/' + ext, mnt_name )
+  return True
 
 #########################
 #      FILE EXTRACT     #
@@ -520,13 +487,13 @@ def extract_aosp():
       #  Handle sparse ext4 fs image
       print('Processing sparse ext4 img...')
       print('-----------------------------')
-      #handle_simg(f)
+      handle_simg(f)
       print('-----------------------------')
       handled = True
     elif(justname.startswith('radio') and justname.endswith('.img')):
       print('Processing vfat img...')
       print('-----------------------------')
-      #handle_vfat(f)
+      handle_vfat(f)
       print('-----------------------------')
     #---------------------------------------------------------------------------------
     if (handled == False):
@@ -540,10 +507,9 @@ def extract_aosp():
 #      MAIN FUNCTION    #
 #########################
 def main():
-  global MY_TMP, MY_USB, MY_PROP, MY_OUT, DIR_TMP, MNT_TMP, APK_TMP, ZIP_TMP, ODEX_TMP, TAR_TMP, MSC_TMP, IMAGE, VENDOR, KEEPSTUFF, VENDORMODE, SUB_DIR
+  global MY_TMP, MY_USB, MY_PROP, MY_OUT, DIR_TMP, MNT_TMP, APK_TMP, ZIP_TMP, ODEX_TMP, TAR_TMP, MSC_TMP, IMAGE, VENDOR, KEEPSTUFF, VENDORMODE, SUB_DIR, MY_FULL_DIR, MY_DIR
 
   args = parse_arguments()
-
   # if no args
   
   print('Args.filepath: ' + args.filepath)
@@ -555,16 +521,20 @@ def main():
     VENDOR = args.vendor
     KEEPSTUFF = (args.keepstuff) # keep all the decompiled/unpackaged stuff for later analysis
     VENDORMODE = (args.vendormode) # should be provided as 0 unless alternate mode
+    JOB_ID = str(args.index)
+
+    MY_DIR=MY_DIR + VENDOR
+    MY_FULL_DIR = MY_FULL_DIR + VENDOR
 
     print('home value: ' + HOME) 
-    DIR_TMP = HOME + '/atsh_tmp' + str(args.index)
+    DIR_TMP = HOME + '/atsh_tmp' + JOB_ID
     print('dir_tmp:' + DIR_TMP)
-    MNT_TMP = HOME + '/atsh_tmp' + str(args.index) + '/mnt'
-    APK_TMP = HOME + '/atsh_apk' + str(args.index)
-    ZIP_TMP = HOME + '/atsh_zip' + str(args.index)
-    ODEX_TMP = HOME + '/atsh_odex' + str(args.index)
-    TAR_TMP = HOME + '/atsh_tar' + str(args.index)
-    MSC_TMP = HOME + '/atsh_msc' + str(args.index)
+    MNT_TMP = HOME + '/atsh_tmp' + JOB_ID + '/mnt'
+    APK_TMP = HOME + '/atsh_apk' + JOB_ID
+    ZIP_TMP = HOME + '/atsh_zip' + JOB_ID
+    ODEX_TMP = HOME + '/atsh_odex' + JOB_ID
+    TAR_TMP = HOME + '/atsh_tar' + JOB_ID
+    MSC_TMP = HOME + '/atsh_msc' + JOB_ID
   else:
     print('filepath and/or vendor are empty')
   temp_str = 'error'
