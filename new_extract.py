@@ -244,6 +244,13 @@ def at_unzip(filename, directory):
       z.extractall(directory)
       z.close()
       return True
+  elif(format == 'POSIX' and format2 == 'tar'):
+    if directory is None:     
+      subprocess.run(['tar', 'xvf', filename], shell=True)
+    else:
+      subprocess.run(['tar','xvf', filename, '-C', directory], shell=True)
+    AT_RES = "good"
+    return True
   else:
     return False
 
@@ -349,6 +356,21 @@ def handle_vfat(img):
   cp(img, DIR_TMP + '/' + ext)
   try:
     mount('-o', 'ro', '-t', 'vfat', DIR_TMP + '/' + ext, mnt_name )
+  except sh.ErrorReturnCode_32:
+    print('error mounting vfat image: ' + ext)
+  BOOT_OAT=''
+  BOOT_OAT_64=''
+  return True
+
+def handle_ext4(img):
+  global BOOT_OAT, BOOT_OAT_64
+  ext = getBasename(img)
+  mnt_name=MNT_TMP + '_' + ext
+  os.makedirs(DIR_TMP, exist_ok=True)
+  os.makedirs(mnt_name, exist_ok=True)
+  cp(img, DIR_TMP + '/' + ext)
+  try:
+    mount('-o', 'ro', '-t', 'ext4', DIR_TMP + '/' + ext, mnt_name )
   except sh.ErrorReturnCode_32:
     print('error mounting vfat image: ' + ext)
   BOOT_OAT=''
@@ -502,6 +524,108 @@ def extract_aosp():
     print(f + ' processed: ' + file_result)
   print('-------------------------')
     
+def process_file_samsung(filename):
+  global TARNESTED
+  justname=getBasename(filename)
+  samformat=getFormat(filename)
+  if(justname.endswith('.img.ext4')):
+    if(samformat == 'Linux'):
+      print('Processing ext4 img...')
+      print('-----------------------------')
+      handle_ext4(filename)
+      print('-----------------------------')
+    else:
+      print('Processing sparse ext4 img...')
+      print('-----------------------------')
+      handle_simg(filename)
+      print('-----------------------------')
+    return True
+  elif(justname in ['cache.img', 'hidden.img', 'omr.img', 'hidden.img.md5', 'cache.img.md5', 'persist.img', 'factoryfs.img', 'vendor.img']):
+    print('Processing sparse ext4 img...')
+    print('-----------------------------')
+    handle_simg(filename)
+    print('-----------------------------')
+    return True
+  elif(justname in ['system.img', 'userdata.img','system.img.md5', 'userdata.img.md5']):
+    if(samformat=='DOS/MBR'):
+      print('Processing vfat img...')
+      print('-----------------------------')
+      handle_vfat(filename)
+      print('-----------------------------')
+    else:
+      print('Processing sparse ext4 img...')
+      print('-----------------------------')
+      handle_simg(filename)
+      print('-----------------------------')
+    return True
+  elif(justname == 'adspso.bin'):
+      print('Processing ext4 img...')
+      print('-----------------------------')
+      handle_ext4(filename)
+      print('-----------------------------')
+      return True
+  elif(justname in ['system.rfs','csc.rfs','efs.img','factoryfs.rfs','cache.rfs','hidden.rfs']):
+      print('Processing vfat img...')
+      print('-----------------------------')
+      handle_vfat(filename)
+      print('-----------------------------')
+      return True
+  elif(justname =='fota.zip'):
+    print('Skipping password protected fota.zip')
+    return True
+  elif('.tar' in justname or '.TAR' in justname):
+    TARNESTED = TARNESTED + 1
+    os.mkdir('nestedPOSIXtar' + str(TARNESTED))
+    ret = subprocess.run(["tar","xvf",str(filename),"-C","nestedPOSIXtar"+str(TARNESTED)],shell=True)
+    os.chdir('nestedPOSIXtar' + str(TARNESTED))
+    fileList=getFiles()
+    for f in fileList:
+      res=process_file_samsung(f)
+      if res:
+        print(f + ' processed: good')
+      else:
+        print(f + 'processed: bad')
+    os.chdir('..')
+    if str(ret) == "55":
+      exit(55)
+    print("-------------------------")
+    os.rmdir("nestedPOSIXtar"+str(TARNESTED))
+    TARNESTED=((TARNESTED - 1))
+    return True
+  return at_extract(filename)
+
+def extract_samsung():
+  print('handling Samsung images...')
+  print('unarchiving each zip inside...')
+  files=getFiles()
+  for f in files:
+    print('Attempting to untar ' + f)
+    os.makedirs(TAR_TMP, exist_ok=True)
+    res=at_unzip(f, TAR_TMP)
+    if res:
+      print('Unzipped sub image ' + f)
+      currentDir=os.getcwd()
+      os.chdir(TAR_TMP)
+      files_tar=getFiles()
+      for i in files_tar:
+        res2= process_file_samsung(i)
+        if res2:
+          print(i + ' processed: good')
+        else:
+          print(i + 'processed: bad')
+      os.chdir(currentDir)
+    else:
+      os.chdir(f)
+      files_sub=getFiles()
+      for i in files_sub():
+        res2=process_file_samsung(i)
+        if res2:
+          print(i + ' processed: good')
+        else:
+          print(i + 'processed: bad')
+      os.chdir('..')
+    subprocess.run(["cp","-r",TAR_TMP,MY_FULL_DIR+"/"+SUB_DIR+"/"+os.popen("basename \""+str(f)+"\"").read().rstrip("\n")])
+  return
 
 #########################
 #      MAIN FUNCTION    #
@@ -548,12 +672,13 @@ def main():
   print('**********************************************************')
   print()
   print('This tool was created in cohesion with FICS. The tool is based of a previous iteration')
-  print('   of andriod extraction where AT commands were pulled from Android image files.')
+  print('of android extraction where AT commands were pulled from Android image files.')
   print()
   print('It also relies heavily on code from the previous python iteration of Android Extract')
-  print('   developed by Sam Simon')
+  print('developed by Sam Simon')
+  print()
   print('For more information on the previous tool, please visit:')
-  print('            www.atcommands.org')
+  print('www.atcommands.org')
   print()
   print()
   print('**********************************************************')
@@ -577,11 +702,11 @@ def main():
     print()
     exit(0)
   elif (args.vendormode == 0):
-    print('WARN : VENDERMODE has been set to 0!')
+    print('WARN : VENDoRMODE has been set to 0!')
     print('WARN : some images may require alternative steps for extraction, in which case you should supply',file=fo2)
-    print('       an additional argument (1). currently applies to:',file=fo2)
-    print('                        password protected Samsung (.zip) image files from firmwarefile.com',file=fo2)
-    print('       Continuing after defaulting to 0!',file=fo2)
+    print('an additional argument (1). currently applies to:',file=fo2)
+    print('password protected Samsung (.zip) image files from firmwarefile.com',file=fo2)
+    print('Continuing after defaulting to 0!',file=fo2)
     print()
     VENDORMODE = 0
 
@@ -602,6 +727,10 @@ def main():
 
   print('ALERT: Cleaning up temporary files from prior run (if any).')
   clean_up()
+
+  #Create logs for vendor formats that cannot be handled 
+  if(VENDOR=="samsung" and not os.path.isfile(MY_PROP)):
+    open(TIZ_LOG, 'w+')
 
   # Assume name.suffix format
   if (VENDOR == "asus"):
@@ -624,6 +753,20 @@ def main():
   
   if (VENDOR == 'aosp'):
     main_unzip_result=at_unzip(IMAGE, None)
+  elif(VENDOR=='samsung'):
+    os.makedirs(SUB_SUB_TMP)
+    DECSUFFIX=IMAGE[-4:]
+    if(DECSUFFIX == '.zip'):
+      #Deal with vendormode versions later
+      main_unzip_result=at_unzip(IMAGE, SUB_SUB_TMP)
+    else:
+      print('The archive format is not currently supported')
+    os.chdir(SUB_SUB_TMP)
+    fileList=getFiles()
+    if(len(fileList)==1 and os.path.isdir(fileList[0])):
+      cp('-r', fileList[0] + '/' + '*', '.')
+      shutil.rmtree(fileList[0])
+    os.chdir('..')      
 
   if (main_unzip_result == False):
     print ('Sorry, there is currently no support for decompressing this image!')
@@ -631,7 +774,7 @@ def main():
   
   os.remove(IMAGE)
 
-  # NOTE: assume there is only 1 dir after unziping
+  # NOTE: assume there is only 1 dir after unzipping
   print('current directory ' + os.getcwd())
   #print('ls results ' + subprocess.Popen(['ls','|','head','-1'], stdout=subprocess.PIPE))
   SUB_SUB_DIR = subprocess.run(['ls', '|', 'head', '-1'], universal_newlines=True, stdout=subprocess.PIPE, shell=True).stdout.rstrip('\n').partition('\n')[0]
@@ -655,6 +798,9 @@ def main():
   if (VENDOR == 'aosp'):
     print('Beginning aosp extraction process')
     extract_aosp()
+  if(VENDOR == 'samsung'):
+    print('Beginning samsung extraction process')
+    extract_samsung()
 
   print('Summarizing the findings...')
   if (KEEPSTUFF == 0):
